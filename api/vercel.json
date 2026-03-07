@@ -1,15 +1,8 @@
 {
   "version": 2,
-  "builds": [
-    {
-      "src": "api/reminder.js",
-      "use": "@vercel/node"
+  "functions": {
+    "api/reminder.js": {
+      "maxDuration": 30
     }
-  ],
-  "routes": [
-    {
-      "src": "/(.*)",
-      "dest": "api/reminder.js"
-    }
-  ]
+  }
 }

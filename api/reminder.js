@@ -1,17 +1,7 @@
-require('dotenv').config();
 const admin = require('firebase-admin');
 const axios = require('axios');
 
-const serviceAccount = {
-  type: process.env.FIREBASE_TYPE,
-  project_id: process.env.FIREBASE_PROJECT_ID,
-  private_key_id: process.env.FIREBASE_PRIVATE_KEY_ID,
-  private_key: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n'),
-  client_email: process.env.FIREBASE_CLIENT_EMAIL,
-  client_id: process.env.FIREBASE_CLIENT_ID,
-  
-};
-
+const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
 const EMAILJS_SERVICE_ID = process.env.EMAILJS_SERVICE_ID;
 const EMAILJS_TEMPLATE_ID = process.env.EMAILJS_TEMPLATE_ID;
 const EMAILJS_USER_ID = process.env.EMAILJS_USER_ID;
@@ -22,11 +12,9 @@ if (!admin.apps.length) {
     credential: admin.credential.cert(serviceAccount),
   });
 }
-
 const db = admin.firestore();
 
 module.exports = async (req, res) => {
-  // التحقق من السر
   if (req.query.secret !== CRON_SECRET) {
     return res.status(401).json({ error: 'غير مصرح' });
   }
@@ -65,28 +53,22 @@ module.exports = async (req, res) => {
         const user = userDoc.data();
         const eventDate = event.date.toDate();
 
-        // إرسال الإيميل عبر EmailJS
-        try {
-          await axios.post('https://api.emailjs.com/api/v1.0/email/send', {
-            service_id: EMAILJS_SERVICE_ID,
-            template_id: EMAILJS_TEMPLATE_ID,
-            user_id: EMAILJS_USER_ID,
-            template_params: {
-              to_email: user.email,
-              to_name: user.name,
-              event_title: event.title,
-              event_date: eventDate.toLocaleDateString('ar-SA', {
-                weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit'
-              }),
-              event_location: event.location || 'غير محدد'
-            }
-          });
+        await axios.post('https://api.emailjs.com/api/v1.0/email/send', {
+          service_id: EMAILJS_SERVICE_ID,
+          template_id: EMAILJS_TEMPLATE_ID,
+          user_id: EMAILJS_USER_ID,
+          template_params: {
+            to_email: user.email,
+            to_name: user.name,
+            event_title: event.title,
+            event_date: eventDate.toLocaleDateString('ar-SA', {
+              weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit'
+            }),
+            event_location: event.location || 'غير محدد'
+          }
+        });
 
-          await regDoc.ref.update({ reminderSent: true });
-          console.log(`✅ تم إرسال التذكير إلى ${user.email}`);
-        } catch (error) {
-          console.error(`❌ فشل الإرسال:`, error.response?.data || error.message);
-        }
+        await regDoc.ref.update({ reminderSent: true });
       }
     }
 
