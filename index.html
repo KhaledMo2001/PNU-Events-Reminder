@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PNU Events - التذكير التلقائي (يعمل في الخلفية)</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Font Awesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    <!-- Firebase v8 compat -->
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
+    <!-- EmailJS -->
+    <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@3/dist/email.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700&display=swap');
+        * { font-family: 'Tajawal', sans-serif; }
+        .log { background: #1f2937; color: #e5e7eb; padding: 1rem; border-radius: 8px; height: 400px; overflow-y: auto; font-family: monospace; text-align: left; direction: ltr; }
+        .warning { background: #fef3c7; border-right: 4px solid #f59e0b; padding: 1rem; border-radius: 8px; }
+        .badge { display: inline-block; padding: 0.25rem 0.5rem; border-radius: 9999px; font-size: 0.75rem; font-weight: 600; }
+        .badge-success { background: #10b981; color: white; }
+        .badge-warning { background: #f59e0b; color: white; }
+        .badge-error { background: #ef4444; color: white; }
+    </style>
+</head>
+<body class="bg-gray-100 p-6">
+    <div class="max-w-4xl mx-auto">
+        <div class="bg-white p-6 rounded-xl shadow mb-6">
+            <h1 class="text-2xl font-bold text-purple-700 mb-4 flex items-center gap-2">
+                <i class="fas fa-clock text-pink-500"></i>
+                نظام التذكير التلقائي - PNU Events
+            </h1>
+            <div class="warning mb-4">
+                <p class="font-bold text-yellow-800 mb-2">⚠️ هام جداً</p>
+                <p class="text-yellow-700">
+                    هذه الصفحة يجب أن تبقى <strong>مفتوحة في المتصفح</strong> ليعمل النظام تلقائياً.
+                    بمجرد فتحها، سيبدأ فوري ثم كل ساعة في فحص قاعدة البيانات وإرسال التذكيرات للمستخدمين المقبولين.
+                </p>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
+                <div class="bg-gray-50 p-3 rounded-lg">
+                    <span class="font-bold">حالة الجدولة:</span>
+                    <span id="schedulerStatusBadge" class="badge badge-success mr-2">تعمل</span>
+                </div>
+                <div class="bg-gray-50 p-3 rounded-lg">
+                    <span class="font-bold">آخر تشغيل:</span>
+                    <span id="lastRunTime">-</span>
+                </div>
+                <div class="bg-gray-50 p-3 rounded-lg">
+                    <span class="font-bold">التشغيل التالي:</span>
+                    <span id="nextRunTime">-</span>
+                </div>
+            </div>
+
+            <div class="flex gap-3 flex-wrap mb-4">
+                <button onclick="runNow()" class="bg-purple-600 hover:bg-purple-700 text-white px-5 py-2 rounded-lg font-bold flex items-center gap-2">
+                    <i class="fas fa-play"></i> تشغيل الآن
+                </button>
+                <button onclick="clearLog()" class="bg-gray-500 hover:bg-gray-600 text-white px-4 py-2 rounded-lg">
+                    <i class="fas fa-trash"></i> مسح السجل
+                </button>
+                <button onclick="stopScheduler()" class="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-lg">
+                    <i class="fas fa-stop"></i> إيقاف الجدولة
+                </button>
+                <button onclick="startScheduler()" class="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-lg">
+                    <i class="fas fa-play"></i> بدء الجدولة
+                </button>
+            </div>
+        </div>
+
+        <div class="bg-white p-6 rounded-xl shadow">
+            <h2 class="text-xl font-bold mb-3 text-gray-800 flex items-center gap-2">
+                <i class="fas fa-history text-purple-500"></i>
+                سجل العمليات
+            </h2>
+            <div id="logContainer" class="log">
+                ▶ جاري التهيئة...
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // -------------------- إعداد Firebase --------------------
+        const firebaseConfig = {
+            apiKey: "AIzaSyAteGMbirrjzaYXNYazTjYlBBRnEXp98I4",
+            authDomain: "pnu-events-e2ea4.firebaseapp.com",
+            projectId: "pnu-events-e2ea4",
+            storageBucket: "pnu-events-e2ea4.firebasestorage.app",
+            messagingSenderId: "594935112306",
+            appId: "1:594935112306:web:2ce77dd6ac97f0c08518eb"
+        };
+        if (!firebase.apps.length) {
+            firebase.initializeApp(firebaseConfig);
+        }
+        const db = firebase.firestore();
+
+        // -------------------- إعداد EmailJS (تم تحديث SERVICE ID) --------------------
+        const EMAILJS_USER_ID = "IOzx2liUz8MiC1FMF";
+        const EMAILJS_SERVICE_ID = "service_7chxvmo"; // تم التعديل هنا
+        const EMAILJS_TEMPLATE_ID = "template_h6qrbke";
+        emailjs.init(EMAILJS_USER_ID);
+
+        // -------------------- عناصر واجهة المستخدم --------------------
+        const logContainer = document.getElementById('logContainer');
+        const schedulerStatusBadge = document.getElementById('schedulerStatusBadge');
+        const lastRunTimeSpan = document.getElementById('lastRunTime');
+        const nextRunTimeSpan = document.getElementById('nextRunTime');
+
+        let schedulerInterval = null;
+        let isRunning = false;
+        let lastRunTimestamp = null; // وقت بدء آخر دورة
+
+        // -------------------- دوال مساعدة --------------------
+        function addLog(message, type = 'info') {
+            const entry = document.createElement('div');
+            const timestamp = new Date().toLocaleTimeString('ar-SA');
+            let color = '#e5e7eb';
+            if (type === 'success') color = '#10b981';
+            else if (type === 'error') color = '#ef4444';
+            else if (type === 'warning') color = '#f59e0b';
+            entry.style.color = color;
+            entry.style.marginBottom = '4px';
+            entry.textContent = `[${timestamp}] ${message}`;
+            logContainer.appendChild(entry);
+            logContainer.scrollTop = logContainer.scrollHeight;
+        }
+
+        function clearLog() {
+            logContainer.innerHTML = '';
+            addLog('تم مسح السجل.', 'info');
+        }
+
+        function updateNextRunTime() {
+            if (schedulerInterval && lastRunTimestamp) {
+                // وقت التشغيل التالي = آخر وقت بدء + ساعة واحدة
+                const next = new Date(lastRunTimestamp.getTime() + 60 * 60 * 1000);
+                nextRunTimeSpan.textContent = next.toLocaleTimeString('ar-SA');
+            } else {
+                nextRunTimeSpan.textContent = 'متوقفة';
+            }
+        }
+
+        function setSchedulerStatus(active) {
+            if (active) {
+                schedulerStatusBadge.textContent = 'تعمل';
+                schedulerStatusBadge.className = 'badge badge-success mr-2';
+            } else {
+                schedulerStatusBadge.textContent = 'متوقفة';
+                schedulerStatusBadge.className = 'badge badge-error mr-2';
+            }
+        }
+
+        // -------------------- إرسال التذكير عبر EmailJS --------------------
+        async function sendReminder(to_email, to_name, event_title, event_date, event_location) {
+            try {
+                const response = await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, {
+                    to_email,
+                    to_name,
+                    event_title,
+                    event_date,
+                    event_location
+                });
+                return { success: true, response };
+            } catch (error) {
+                return { success: false, error };
+            }
+        }
+
+        // -------------------- الدالة الرئيسية --------------------
+        async function checkAndSendReminders() {
+            if (isRunning) {
+                addLog('⏳ العملية السابقة لا تزال قيد التنفيذ، تخطي هذه الدورة.', 'warning');
+                return;
+            }
+            isRunning = true;
+            const startTime = new Date();
+            lastRunTimestamp = startTime;
+            lastRunTimeSpan.textContent = startTime.toLocaleTimeString('ar-SA');
+            addLog('🔍 بدء البحث عن الفعاليات التي تبدأ خلال 24 ساعة...', 'info');
+            try {
+                const now = new Date();
+                const in24Hours = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+
+                const eventsSnapshot = await db.collection("events")
+                    .where("date", ">=", now)
+                    .where("date", "<=", in24Hours)
+                    .get();
+
+                if (eventsSnapshot.empty) {
+                    addLog('ℹ️ لا توجد فعاليات خلال الـ 24 ساعة القادمة.', 'warning');
+                    isRunning = false;
+                    updateNextRunTime(); // تحديث الوقت التالي
+                    return;
+                }
+
+                addLog(`📋 تم العثور على ${eventsSnapshot.size} فعالية/فعاليات.`, 'success');
+
+                for (const eventDoc of eventsSnapshot.docs) {
+                    const event = eventDoc.data();
+                    const eventId = eventDoc.id;
+                    const eventDate = event.date.toDate();
+                    const formattedDate = eventDate.toLocaleString("ar-SA", {
+                        weekday: "long", year: "numeric", month: "long", day: "numeric",
+                        hour: "2-digit", minute: "2-digit"
+                    });
+
+                    addLog(`📅 معالجة فعالية: ${event.title} (${formattedDate})`, 'info');
+
+                    const registrationsSnapshot = await db.collection("registrations")
+                        .where("eventId", "==", eventId)
+                        .where("status", "==", "approved")
+                        .where("reminderSent", "==", false)
+                        .get();
+
+                    if (registrationsSnapshot.empty) {
+                        addLog(`⏭️ لا يوجد مستخدمين جدد لهذه الفعالية.`, 'info');
+                        continue;
+                    }
+
+                    addLog(`👥 سيتم إرسال تذكير إلى ${registrationsSnapshot.size} مستخدم.`, 'success');
+
+                    for (const regDoc of registrationsSnapshot.docs) {
+                        const reg = regDoc.data();
+                        const userDoc = await db.collection("users").doc(reg.userId).get();
+                        if (!userDoc.exists) {
+                            addLog(`⚠️ مستخدم غير موجود: ${reg.userId}`, 'warning');
+                            continue;
+                        }
+                        const user = userDoc.data();
+
+                        addLog(`📧 جاري إرسال تذكير إلى ${user.email}...`, 'info');
+                        const result = await sendReminder(
+                            user.email,
+                            user.name,
+                            event.title,
+                            formattedDate,
+                            event.location || "غير محدد"
+                        );
+
+                        if (result.success) {
+                            await regDoc.ref.update({ reminderSent: true });
+                            addLog(`✅ تم إرسال التذكير إلى ${user.email}.`, 'success');
+                        } else {
+                            addLog(`❌ فشل إرسال التذكير إلى ${user.email}: ${result.error.message || 'خطأ غير معروف'}`, 'error');
+                            if (result.error.text) addLog(`   ${result.error.text}`, 'error');
+                        }
+                    }
+                }
+                addLog('🏁 انتهت معالجة جميع الفعاليات.', 'success');
+            } catch (error) {
+                addLog(`❌ خطأ عام: ${error.message}`, 'error');
+                console.error(error);
+            } finally {
+                isRunning = false;
+                updateNextRunTime(); // تحديث الوقت التالي بعد الانتهاء
+            }
+        }
+
+        // -------------------- الجدولة --------------------
+        function startScheduler() {
+            if (schedulerInterval) {
+                addLog('⚠️ الجدولة تعمل بالفعل.', 'warning');
+                return;
+            }
+            // تشغيل فوري
+            checkAndSendReminders();
+            // جدولة كل ساعة
+            schedulerInterval = setInterval(() => {
+                checkAndSendReminders();
+            }, 60 * 60 * 1000); // 60 دقيقة
+            setSchedulerStatus(true);
+            addLog('⏰ بدء الجدولة التلقائية (كل ساعة).', 'success');
+        }
+
+        function stopScheduler() {
+            if (schedulerInterval) {
+                clearInterval(schedulerInterval);
+                schedulerInterval = null;
+                setSchedulerStatus(false);
+                nextRunTimeSpan.textContent = 'متوقفة';
+                addLog('⏹️ تم إيقاف الجدولة.', 'info');
+            } else {
+                addLog('⚠️ الجدولة غير نشطة.', 'warning');
+            }
+        }
+
+        function runNow() {
+            checkAndSendReminders();
+        }
+
+        // -------------------- بدء التشغيل التلقائي عند تحميل الصفحة --------------------
+        window.onload = function() {
+            // التأكد من عدم وجود جدولة سابقة
+            if (schedulerInterval) {
+                clearInterval(schedulerInterval);
+                schedulerInterval = null;
+            }
+            startScheduler(); // يبدأ فوراً
+        };
+    </script>
+</body>
+</html>
